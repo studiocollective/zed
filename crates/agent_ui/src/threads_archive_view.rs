@@ -19,11 +19,11 @@ use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    ListState, Render, SharedString, Subscription, Task, TaskExt, WeakEntity, Window, list,
-    prelude::*, px,
+    ListState, MouseDownEvent, Pixels, Point, Render, SharedString, Subscription, Task, TaskExt,
+    WeakEntity, Window, anchored, deferred, list, prelude::*, px,
 };
 use itertools::Itertools as _;
-use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
+use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
@@ -32,8 +32,8 @@ use project::{AgentId, AgentServerStore};
 use settings::Settings as _;
 use theme::ActiveTheme;
 use ui::{
-    AgentThreadStatus, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, ScrollAxes,
-    Scrollbars, Tab, ThreadItem, Tooltip, WithScrollbar, prelude::*,
+    AgentThreadStatus, ContextMenu, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader,
+    ScrollAxes, Scrollbars, Tab, ThreadItem, Tooltip, WithScrollbar, prelude::*,
     utils::platform_title_bar_height,
 };
 use ui_input::ErasedEditor;
@@ -156,6 +156,14 @@ pub struct ThreadsArchiveView {
     archived_branch_names: HashMap<ThreadId, HashMap<PathBuf, String>>,
     _load_branch_names_task: Task<()>,
     thread_filter: ThreadFilter,
+    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    renaming: Option<RenamingThread>,
+}
+
+struct RenamingThread {
+    thread_id: ThreadId,
+    editor: Entity<Editor>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl ThreadsArchiveView {
@@ -230,6 +238,8 @@ impl ThreadsArchiveView {
             archived_branch_names: HashMap::default(),
             _load_branch_names_task: Task::ready(()),
             thread_filter: ThreadFilter::All,
+            context_menu: None,
+            renaming: None,
         };
 
         this.update_items(cx);
@@ -253,6 +263,85 @@ impl ThreadsArchiveView {
     pub fn clear_restoring(&mut self, thread_id: &ThreadId, cx: &mut Context<Self>) {
         self.restoring.remove(thread_id);
         cx.notify();
+    }
+
+    fn deploy_thread_context_menu(
+        &mut self,
+        thread: ThreadMetadata,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entity = cx.entity();
+        let context_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
+            menu.context(self.focus_handle.clone()).entry(
+                "Rename",
+                None,
+                move |window, cx| {
+                    let thread = thread.clone();
+                    entity.update(cx, |this, cx| this.start_rename(thread, window, cx));
+                },
+            )
+        });
+
+        window.focus(&context_menu.focus_handle(cx), cx);
+        let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+            this.context_menu.take();
+            cx.notify();
+        });
+        self.context_menu = Some((context_menu, position, subscription));
+        cx.notify();
+    }
+
+    fn start_rename(
+        &mut self,
+        thread: ThreadMetadata,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let thread_id = thread.thread_id;
+        let initial_title = thread.display_title();
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text(initial_title.to_string(), window, cx);
+            editor.select_all(&editor::actions::SelectAll, window, cx);
+            editor
+        });
+
+        let edit_subscription =
+            cx.subscribe_in(&editor, window, |this, _editor, event, window, cx| {
+                if matches!(event, editor::EditorEvent::Blurred) {
+                    this.commit_rename(window, cx);
+                }
+            });
+
+        window.focus(&editor.focus_handle(cx), cx);
+
+        self.renaming = Some(RenamingThread {
+            thread_id,
+            editor,
+            _subscriptions: vec![edit_subscription],
+        });
+        cx.notify();
+    }
+
+    fn commit_rename(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(renaming) = self.renaming.take() else {
+            return;
+        };
+        let new_title = renaming.editor.read(cx).text(cx).trim().to_string();
+        if !new_title.is_empty() {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.set_title_override(renaming.thread_id, SharedString::from(new_title), cx);
+            });
+        }
+        cx.notify();
+    }
+
+    fn cancel_rename(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.renaming.take().is_some() {
+            cx.notify();
+        }
     }
 
     pub fn focus_filter_editor(&self, window: &mut Window, cx: &mut App) {
@@ -572,12 +661,22 @@ impl ThreadsArchiveView {
     }
 
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        if self.renaming.is_some() {
+            self.commit_rename(window, cx);
+            return;
+        }
         let Some(ix) = self.selection else { return };
         let Some(ArchiveListItem::Entry { thread, .. }) = self.items.get(ix) else {
             return;
         };
 
         self.unarchive_thread(thread.clone(), window, cx);
+    }
+
+    fn handle_cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if self.renaming.is_some() {
+            self.cancel_rename(window, cx);
+        }
     }
 
     fn render_list_entry(
@@ -648,6 +747,13 @@ impl ThreadsArchiveView {
 
                 let archived_color = Color::Custom(cx.theme().colors().icon_muted.opacity(0.6));
 
+                let renaming_editor = self
+                    .renaming
+                    .as_ref()
+                    .filter(|r| r.thread_id == thread.thread_id)
+                    .map(|r| r.editor.clone());
+
+                let thread_for_context_menu = thread.clone();
                 let base = ThreadItem::new(id, thread.display_title())
                     .icon(icon)
                     .when(is_archived, |this| {
@@ -664,6 +770,15 @@ impl ThreadsArchiveView {
                     .worktrees(worktrees)
                     .focused(is_focused)
                     .hovered(is_hovered)
+                    .when_some(renaming_editor, |this, editor| this.title_element(editor))
+                    .on_secondary_mouse_down(cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        this.deploy_thread_context_menu(
+                            thread_for_context_menu.clone(),
+                            event.position,
+                            window,
+                            cx,
+                        );
+                    }))
                     .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
                         let previously_hovered = this.hovered_index;
                         this.hovered_index = if *is_hovered {
@@ -729,6 +844,9 @@ impl ThreadsArchiveView {
                     .on_click({
                         let thread = thread.clone();
                         cx.listener(move |this, _, window, cx| {
+                            if this.renaming.is_some() {
+                                return;
+                            }
                             this.unarchive_thread(thread.clone(), window, cx);
                         })
                     })
@@ -759,6 +877,9 @@ impl ThreadsArchiveView {
                     .on_click({
                         let thread = thread.clone();
                         cx.listener(move |this, _, window, cx| {
+                            if this.renaming.is_some() {
+                                return;
+                            }
                             telemetry::event!(
                                 "Archived Thread Opened",
                                 agent = thread.agent_id.as_ref(),
@@ -1076,12 +1197,22 @@ impl Render for ThreadsArchiveView {
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::handle_cancel))
             .on_action(cx.listener(Self::remove_selected_thread))
             .on_action(cx.listener(Self::archive_selected_thread))
             .size_full()
             .child(self.render_header(window, cx))
             .when(!has_query, |this| this.child(self.render_toolbar(cx)))
             .child(content)
+            .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+                deferred(
+                    anchored()
+                        .position(*position)
+                        .anchor(gpui::Anchor::TopLeft)
+                        .child(menu.clone()),
+                )
+                .with_priority(3)
+            }))
     }
 }
 

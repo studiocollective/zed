@@ -33,7 +33,7 @@ use gpui::{
     ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
     ObjectFit, PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TaskExt, TextStyle,
     WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient,
-    list, point, pulsating_between,
+    list, point, px, pulsating_between,
 };
 use language::Buffer;
 use language_model::{LanguageModelCompletionError, LanguageModelRegistry};
@@ -1450,6 +1450,10 @@ impl ConversationView {
             AcpThreadEvent::NewEntry => {
                 let len = thread.read(cx).entries().len();
                 let index = len - 1;
+                let is_user_message = matches!(
+                    thread.read(cx).entries().get(index),
+                    Some(AgentThreadEntry::UserMessage(_))
+                );
                 if let Some(active) = self.thread_view(&session_id) {
                     let entry_view_state = active.read(cx).entry_view_state.clone();
                     let list_state = active.read(cx).list_state.clone();
@@ -1462,6 +1466,16 @@ impl ConversationView {
                                 .and_then(|entry| entry.focus_handle(cx))],
                         );
                     });
+                    // Anchor the user's prompt at the top of the viewport so they
+                    // don't have to scroll up to re-read what they just sent as the
+                    // assistant streams below it. `scroll_to` disengages tail-follow
+                    // until the user scrolls back to the bottom.
+                    if is_user_message {
+                        list_state.scroll_to(ListOffset {
+                            item_ix: index,
+                            offset_in_item: px(0.),
+                        });
+                    }
                     active.update(cx, |active, cx| {
                         active.sync_editor_mode_for_empty_state(cx);
                     });

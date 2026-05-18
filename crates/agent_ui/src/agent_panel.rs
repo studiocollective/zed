@@ -4322,9 +4322,10 @@ impl AgentPanel {
             let is_agent_selected = move |agent: Agent| selected_agent == agent;
 
             let workspace = self.workspace.clone();
-            let is_via_collab = workspace
+            let (is_via_collab, has_git_repo) = workspace
                 .update(cx, |workspace, cx| {
-                    workspace.project().read(cx).is_via_collab()
+                    let project = workspace.project().read(cx);
+                    (project.is_via_collab(), !project.repositories(cx).is_empty())
                 })
                 .unwrap_or_default();
 
@@ -4505,6 +4506,19 @@ impl AgentPanel {
                             }
 
                             menu
+                        })
+                        .when(has_git_repo && !is_via_collab, |menu| {
+                            menu.separator().item(
+                                ContextMenuEntry::new("New Worktree…")
+                                    .icon(IconName::GitWorktree)
+                                    .icon_color(Color::Muted)
+                                    .handler(move |window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(zed_actions::git::Worktree),
+                                            cx,
+                                        )
+                                    }),
+                            )
                         })
                         .separator()
                         .item(
