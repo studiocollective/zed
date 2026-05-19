@@ -253,8 +253,8 @@ pub mod workspace {
 }
 
 /// Describes which ref to base a new git worktree on. The worktree is
-/// always created in a detached HEAD state; users can opt into creating
-/// a branch afterwards from the worktree itself.
+/// created in a detached HEAD state for `CurrentBranch`/`ExistingBranch`;
+/// `NewBranch` instead creates a fresh local branch and checks it out.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum NewWorktreeBranchTarget {
@@ -263,6 +263,16 @@ pub enum NewWorktreeBranchTarget {
     CurrentBranch,
     /// Create a detached worktree at the tip of an existing branch.
     ExistingBranch { name: String },
+    /// Create a new local branch in the worktree. When `name` is `None`,
+    /// the branch is named after the worktree. `base` selects the branch
+    /// or commit the new branch should be created from; when unset, the
+    /// current HEAD is used.
+    NewBranch {
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        base: Option<String>,
+    },
 }
 
 /// Creates a new git worktree and switches the workspace to it.

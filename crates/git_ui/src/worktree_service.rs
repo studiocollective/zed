@@ -77,6 +77,7 @@ pub fn resolve_worktree_branch_target(branch_target: &NewWorktreeBranchTarget) -
     match branch_target {
         NewWorktreeBranchTarget::CurrentBranch => None,
         NewWorktreeBranchTarget::ExistingBranch { name } => Some(name.clone()),
+        NewWorktreeBranchTarget::NewBranch { base, .. } => base.clone(),
     }
 }
 
@@ -89,7 +90,7 @@ fn start_worktree_creations(
     worktree_name: Option<String>,
     existing_worktree_names: &[String],
     existing_worktree_paths: &HashSet<PathBuf>,
-    base_ref: Option<String>,
+    branch_target: &NewWorktreeBranchTarget,
     worktree_directory_setting: &str,
     rng: &mut impl rand::Rng,
     cx: &mut gpui::App,
@@ -110,6 +111,24 @@ fn start_worktree_creations(
             .unwrap_or_else(|| "worktree".to_string())
     });
 
+    let make_target = || match branch_target {
+        NewWorktreeBranchTarget::CurrentBranch => {
+            git::repository::CreateWorktreeTarget::Detached { base_sha: None }
+        }
+        NewWorktreeBranchTarget::ExistingBranch { name } => {
+            git::repository::CreateWorktreeTarget::Detached {
+                base_sha: Some(name.clone()),
+            }
+        }
+        NewWorktreeBranchTarget::NewBranch { name, base } => {
+            let branch_name = name.clone().unwrap_or_else(|| worktree_name.clone());
+            git::repository::CreateWorktreeTarget::NewBranch {
+                branch_name,
+                base_sha: base.clone(),
+            }
+        }
+    };
+
     for repo in git_repos {
         let (work_dir, new_path, receiver) = repo.update(cx, |repo, _cx| {
             let new_path =
@@ -117,10 +136,7 @@ fn start_worktree_creations(
             if existing_worktree_paths.contains(&new_path) {
                 anyhow::bail!("A worktree already exists at {}", new_path.display());
             }
-            let target = git::repository::CreateWorktreeTarget::Detached {
-                base_sha: base_ref.clone(),
-            };
-            let receiver = repo.create_worktree(target, new_path.clone());
+            let receiver = repo.create_worktree(make_target(), new_path.clone());
             let work_dir = repo.work_directory_abs_path.clone();
             anyhow::Ok((work_dir, new_path, receiver))
         })?;
@@ -507,15 +523,13 @@ async fn do_create_worktree(
 
     let mut rng = rand::rng();
 
-    let base_ref = resolve_worktree_branch_target(&branch_target);
-
     let (creation_infos, path_remapping) = cx.update(|_, cx| {
         start_worktree_creations(
             &git_repos,
             worktree_name,
             &existing_worktree_names,
             &existing_worktree_paths,
-            base_ref,
+            &branch_target,
             &worktree_directory_setting,
             &mut rng,
             cx,

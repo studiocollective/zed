@@ -233,7 +233,12 @@ pub fn init(cx: &mut App) {
                 .register_action(|workspace, _: &NewThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
-                            panel.new_thread_with_workspace(Some(workspace), window, cx)
+                            panel.new_thread_with_workspace(
+                                Some(workspace),
+                                AgentThreadSource::AgentPanel,
+                                window,
+                                cx,
+                            )
                         });
                         workspace.focus_panel::<AgentPanel>(window, cx);
                     }
@@ -1365,20 +1370,58 @@ impl AgentPanel {
             return;
         }
 
-        self.new_thread_with_workspace(None, window, cx);
+        self.new_thread_with_workspace(None, AgentThreadSource::AgentPanel, window, cx);
     }
 
-    fn new_thread_with_workspace(
+    /// When `agent.new_thread_creates_worktree` is enabled and the project
+    /// contains a non-collab git repository, dispatch the worktree-creation
+    /// action so the new thread lives on a fresh worktree + branch. Returns
+    /// `true` when the worktree flow took over, so the caller should skip
+    /// the normal new-thread activation.
+    pub(crate) fn try_start_new_thread_in_worktree(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let settings = AgentSettings::get_global(cx);
+        if !settings.new_thread_creates_worktree {
+            return false;
+        }
+        let base = settings.new_thread_worktree_base_branch.clone();
+
+        let project = self.project.read(cx);
+        if project.is_via_collab() || project.repositories(cx).is_empty() {
+            return false;
+        }
+
+        window.dispatch_action(
+            Box::new(zed_actions::CreateWorktree {
+                worktree_name: None,
+                branch_target: zed_actions::NewWorktreeBranchTarget::NewBranch {
+                    name: None,
+                    base,
+                },
+            }),
+            cx,
+        );
+        true
+    }
+
+    pub fn new_thread_with_workspace(
         &mut self,
         workspace: Option<&Workspace>,
+        source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.should_create_terminal_for_new_entry(cx) {
-            self.new_terminal(workspace, AgentThreadSource::AgentPanel, window, cx);
-        } else {
-            self.activate_new_thread(true, AgentThreadSource::AgentPanel, window, cx);
+            self.new_terminal(workspace, source, window, cx);
+            return;
         }
+        if self.try_start_new_thread_in_worktree(window, cx) {
+            return;
+        }
+        self.activate_new_thread(true, source, window, cx);
     }
 
     pub fn activate_new_thread(
@@ -1532,6 +1575,9 @@ impl AgentPanel {
         }
 
         self.selected_agent = action.agent.clone().into();
+        // Explicit agent pick — skip the terminal-repeat / worktree-creation
+        // diversions in `new_thread_with_workspace`, which would otherwise
+        // override the user's choice.
         self.activate_new_thread(true, AgentThreadSource::AgentPanel, window, cx);
     }
 
@@ -4584,6 +4630,11 @@ impl AgentPanel {
                                                 {
                                                     panel.update(cx, |panel, cx| {
                                                         panel.selected_agent = Agent::NativeAgent;
+                                                        // Explicit agent pick — go straight to
+                                                        // `activate_new_thread` so the choice
+                                                        // isn't overridden by the terminal-repeat
+                                                        // or worktree-creation diversions in
+                                                        // `new_thread_with_workspace`.
                                                         panel.activate_new_thread(
                                                             true,
                                                             AgentThreadSource::AgentPanel,
@@ -8251,6 +8302,22 @@ mod tests {
 
         let resolved = git_ui::worktree_service::resolve_worktree_branch_target(
             &NewWorktreeBranchTarget::CurrentBranch,
+        );
+        assert_eq!(resolved, None);
+
+        let resolved = git_ui::worktree_service::resolve_worktree_branch_target(
+            &NewWorktreeBranchTarget::NewBranch {
+                name: Some("agent-pomodoro".into()),
+                base: Some("main".into()),
+            },
+        );
+        assert_eq!(resolved, Some("main".to_string()));
+
+        let resolved = git_ui::worktree_service::resolve_worktree_branch_target(
+            &NewWorktreeBranchTarget::NewBranch {
+                name: None,
+                base: None,
+            },
         );
         assert_eq!(resolved, None);
     }

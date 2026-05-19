@@ -7740,6 +7740,55 @@ fn ai_page(cx: &App) -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "New Thread Creates Worktree",
+                description: "When enabled, \"New Thread\" creates a fresh git worktree and a new branch (with the same name as the worktree) before starting the thread. Requires the project to contain a git repository.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.new_thread_creates_worktree"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .new_thread_creates_worktree
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .new_thread_creates_worktree = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "New Thread Worktree Base Branch",
+                description: "The base branch to create new agent worktree branches from. When empty, the current branch is used as the base.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.new_thread_worktree_base_branch"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .new_thread_worktree_base_branch
+                            .as_ref()
+                            .or(DEFAULT_EMPTY_STRING)
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .new_thread_worktree_base_branch =
+                            value.filter(|s| !s.is_empty());
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: Some("main"),
+                    ..Default::default()
+                })),
+                files: USER,
+            }),
         ]);
 
         items.into_boxed_slice()
