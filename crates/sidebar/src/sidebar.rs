@@ -25,8 +25,9 @@ use feature_flags::{
 };
 use gpui::{
     Action as _, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EntityId, FocusHandle,
-    Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task, TaskExt,
-    WeakEntity, Window, WindowHandle, linear_color_stop, linear_gradient, list, prelude::*, px,
+    Focusable, KeyContext, ListState, Modifiers, MouseDownEvent, Pixels, Point, Render,
+    SharedString, Subscription, Task, TaskExt, WeakEntity, Window, WindowHandle, anchored,
+    deferred, linear_color_stop, linear_gradient, list, prelude::*, px,
 };
 use itertools::Itertools;
 use menu::{
@@ -127,7 +128,7 @@ enum ArchiveWorktreeOutcome {
 #[derive(Clone, Debug)]
 enum ActiveEntry {
     Thread {
-        thread_id: agent_ui::ThreadId,
+        thread_id: ThreadId,
         /// Stable remote identifier, used for matching when thread_id
         /// differs (e.g. after cross-window activation creates a new
         /// local ThreadId).
@@ -149,7 +150,7 @@ impl ActiveEntry {
         }
     }
 
-    fn is_active_thread(&self, thread_id: &agent_ui::ThreadId) -> bool {
+    fn is_active_thread(&self, thread_id: &ThreadId) -> bool {
         matches!(self, ActiveEntry::Thread { thread_id: active_thread_id, .. } if active_thread_id == thread_id)
     }
 
@@ -371,14 +372,14 @@ impl From<TerminalEntry> for ListEntry {
 #[derive(Default)]
 struct SidebarContents {
     entries: Vec<ListEntry>,
-    notified_threads: HashSet<agent_ui::ThreadId>,
+    notified_threads: HashSet<ThreadId>,
     notified_terminals: HashSet<TerminalId>,
     project_header_indices: Vec<usize>,
     has_open_projects: bool,
 }
 
 impl SidebarContents {
-    fn is_thread_notified(&self, thread_id: &agent_ui::ThreadId) -> bool {
+    fn is_thread_notified(&self, thread_id: &ThreadId) -> bool {
         self.notified_threads.contains(thread_id)
     }
 
@@ -594,9 +595,9 @@ pub struct Sidebar {
     terminal_last_accessed: HashMap<TerminalId, DateTime<Utc>>,
     thread_switcher: Option<Entity<ThreadSwitcher>>,
     _thread_switcher_subscriptions: Vec<gpui::Subscription>,
-    pending_thread_activation: Option<agent_ui::ThreadId>,
+    pending_thread_activation: Option<ThreadId>,
     view: SidebarView,
-    restoring_tasks: HashMap<agent_ui::ThreadId, Task<()>>,
+    restoring_tasks: HashMap<ThreadId, Task<()>>,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
@@ -608,6 +609,14 @@ pub struct Sidebar {
     /// buttons. This field tracks whether we were using verbose labels so they
     /// can stay stable after dismissing one of the banners.
     import_banners_use_verbose_labels: Option<bool>,
+    thread_context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    renaming_thread: Option<RenamingThread>,
+}
+
+struct RenamingThread {
+    thread_id: ThreadId,
+    editor: Entity<Editor>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Sidebar {
@@ -700,6 +709,87 @@ impl Sidebar {
             _subscriptions: Vec::new(),
             _draft_editor_observations: Vec::new(),
             import_banners_use_verbose_labels: None,
+            thread_context_menu: None,
+            renaming_thread: None,
+        }
+    }
+
+    fn deploy_thread_context_menu(
+        &mut self,
+        thread_id: ThreadId,
+        title: SharedString,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entity = cx.entity();
+        let context_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
+            menu.context(self.focus_handle.clone()).entry(
+                "Rename",
+                None,
+                move |window, cx| {
+                    let title = title.clone();
+                    entity.update(cx, |this, cx| this.start_rename(thread_id, title, window, cx));
+                },
+            )
+        });
+
+        window.focus(&context_menu.focus_handle(cx), cx);
+        let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+            this.thread_context_menu.take();
+            cx.notify();
+        });
+        self.thread_context_menu = Some((context_menu, position, subscription));
+        cx.notify();
+    }
+
+    fn start_rename(
+        &mut self,
+        thread_id: ThreadId,
+        initial_title: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text(initial_title.to_string(), window, cx);
+            editor.select_all(&editor::actions::SelectAll, window, cx);
+            editor
+        });
+
+        let edit_subscription =
+            cx.subscribe_in(&editor, window, |this, _editor, event, window, cx| {
+                if matches!(event, editor::EditorEvent::Blurred) {
+                    this.commit_rename(window, cx);
+                }
+            });
+
+        window.focus(&editor.focus_handle(cx), cx);
+
+        self.renaming_thread = Some(RenamingThread {
+            thread_id,
+            editor,
+            _subscriptions: vec![edit_subscription],
+        });
+        cx.notify();
+    }
+
+    fn commit_rename(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(renaming) = self.renaming_thread.take() else {
+            return;
+        };
+        let new_title = renaming.editor.read(cx).text(cx).trim().to_string();
+        if !new_title.is_empty() {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.set_title_override(renaming.thread_id, SharedString::from(new_title), cx);
+            });
+        }
+        cx.notify();
+    }
+
+    fn cancel_rename(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.renaming_thread.take().is_some() {
+            cx.notify();
         }
     }
 
@@ -911,7 +1001,7 @@ impl Sidebar {
             .entry(thread_id)
             .is_some_and(|m| m.archived);
         if is_archived {
-            self.create_new_thread(&workspace, window, cx);
+            self.create_new_thread(&workspace, false, window, cx);
         }
     }
 
@@ -1049,6 +1139,7 @@ impl Sidebar {
     fn open_workspace_and_create_entry(
         &mut self,
         project_group_key: &ProjectGroupKey,
+        skip_worktree: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1078,7 +1169,7 @@ impl Sidebar {
         cx.spawn_in(window, async move |this, cx| {
             let workspace = task.await?;
             this.update_in(cx, |this, window, cx| {
-                this.create_new_entry(&workspace, window, cx);
+                this.create_new_entry(&workspace, skip_worktree, window, cx);
             })?;
             anyhow::Ok(())
         })
@@ -1132,10 +1223,10 @@ impl Sidebar {
         let mut notified_threads = previous.notified_threads;
         let mut notified_terminals: HashSet<TerminalId> = HashSet::new();
         let mut current_session_ids: HashSet<acp::SessionId> = HashSet::new();
-        let mut current_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
+        let mut current_thread_ids: HashSet<ThreadId> = HashSet::new();
         let mut current_terminal_ids: HashSet<TerminalId> = HashSet::new();
         let mut project_header_indices: Vec<usize> = Vec::new();
-        let mut seen_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
+        let mut seen_thread_ids: HashSet<ThreadId> = HashSet::new();
 
         let has_open_projects = workspaces
             .iter()
@@ -1931,17 +2022,13 @@ impl Sidebar {
                                 cx,
                             )
                         })
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                this.set_group_expanded(&key, true, cx);
-                                this.selection = None;
-                                if let Some(workspace) = this.workspace_for_group(&key, cx) {
-                                    this.create_new_entry(&workspace, window, cx);
-                                } else {
-                                    this.open_workspace_and_create_entry(&key, window, cx);
-                                }
-                            },
-                        ))
+                        .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                            // Cmd/Ctrl-click bypasses the worktree-creation
+                            // setting and starts a thread in the existing
+                            // worktree.
+                            let skip_worktree = event.modifiers().secondary();
+                            this.start_new_thread_for_group(&key, skip_worktree, window, cx);
+                        }))
                     })
                     .child(self.render_project_header_ellipsis_menu(
                         ix,
@@ -2458,6 +2545,10 @@ impl Sidebar {
     }
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if self.renaming_thread.is_some() {
+            self.cancel_rename(window, cx);
+            return;
+        }
         if self.filter_editor.read(cx).is_focused(window) {
             if self.reset_filter_editor_text(window, cx) {
                 self.selection = None;
@@ -2592,6 +2683,10 @@ impl Sidebar {
     }
 
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        if self.renaming_thread.is_some() {
+            self.commit_rename(window, cx);
+            return;
+        }
         let Some(ix) = self.selection else { return };
         let Some(entry) = self.contents.entries.get(ix) else {
             return;
@@ -3253,7 +3348,7 @@ impl Sidebar {
         self.update_entries(cx);
     }
 
-    fn stop_thread(&mut self, thread_id: &agent_ui::ThreadId, cx: &mut Context<Self>) {
+    fn stop_thread(&mut self, thread_id: &ThreadId, cx: &mut Context<Self>) {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
@@ -3746,7 +3841,7 @@ impl Sidebar {
     fn archive_and_activate(
         &mut self,
         _session_id: &acp::SessionId,
-        thread_id: Option<agent_ui::ThreadId>,
+        thread_id: Option<ThreadId>,
         neighbor: Option<&ActivatableEntry>,
         thread_folder_paths: Option<&PathList>,
         in_flight_archive: Option<(Task<()>, async_channel::Sender<()>)>,
@@ -3961,7 +4056,7 @@ impl Sidebar {
         self.terminal_last_accessed.insert(id, Utc::now());
     }
 
-    fn record_thread_interacted(&mut self, thread_id: &agent_ui::ThreadId, cx: &mut App) {
+    fn record_thread_interacted(&mut self, thread_id: &ThreadId, cx: &mut App) {
         let store = ThreadMetadataStore::global(cx);
         store.update(cx, |store, cx| {
             store.update_interacted_at(thread_id, Utc::now(), cx);
@@ -3977,7 +4072,7 @@ impl Sidebar {
         terminals: Vec<TerminalEntry>,
         threads: Vec<ThreadEntry>,
         current_session_ids: &mut HashSet<acp::SessionId>,
-        current_thread_ids: &mut HashSet<agent_ui::ThreadId>,
+        current_thread_ids: &mut HashSet<ThreadId>,
     ) {
         fn display_time(entry: &ListEntry) -> DateTime<Utc> {
             match entry {
@@ -4415,6 +4510,14 @@ impl Sidebar {
             (thread.icon, thread.icon_from_external_svg.clone())
         };
 
+        let renaming_editor = self
+            .renaming_thread
+            .as_ref()
+            .filter(|r| r.thread_id == thread.metadata.thread_id)
+            .map(|r| r.editor.clone());
+
+        let context_menu_title = title.clone();
+
         ThreadItem::new(id, title)
             .base_bg(sidebar_bg)
             .icon(icon)
@@ -4431,6 +4534,18 @@ impl Sidebar {
             .highlight_positions(thread.highlight_positions.to_vec())
             .title_generating(thread.is_title_generating)
             .notified(has_notification)
+            .when_some(renaming_editor, |this, editor| this.title_element(editor))
+            .on_secondary_mouse_down(cx.listener(
+                move |this, event: &MouseDownEvent, window, cx| {
+                    this.deploy_thread_context_menu(
+                        thread_id_for_actions,
+                        context_menu_title.clone(),
+                        event.position,
+                        window,
+                        cx,
+                    );
+                },
+            ))
             .when(thread.diff_stats.lines_added > 0, |this| {
                 this.added(thread.diff_stats.lines_added as usize)
             })
@@ -4506,6 +4621,9 @@ impl Sidebar {
             })
             .on_click({
                 cx.listener(move |this, _, window, cx| {
+                    if this.renaming_thread.is_some() {
+                        return;
+                    }
                     this.selection = None;
                     match &thread_workspace {
                         ThreadEntryWorkspace::Open(workspace) => {
@@ -4673,15 +4791,9 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         if let Some(key) = self.selected_group_key() {
-            self.set_group_expanded(&key, true, cx);
-            self.selection = None;
-            if let Some(workspace) = self.workspace_for_group(&key, cx) {
-                self.create_new_entry(&workspace, window, cx);
-            } else {
-                self.open_workspace_and_create_entry(&key, window, cx);
-            }
+            self.start_new_thread_for_group(&key, false, window, cx);
         } else if let Some(workspace) = self.active_workspace(cx) {
-            self.create_new_entry(&workspace, window, cx);
+            self.create_new_entry(&workspace, false, window, cx);
         }
     }
 
@@ -4714,9 +4826,26 @@ impl Sidebar {
         self.update_entries(cx);
     }
 
+    fn start_new_thread_for_group(
+        &mut self,
+        key: &ProjectGroupKey,
+        skip_worktree: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_group_expanded(key, true, cx);
+        self.selection = None;
+        if let Some(workspace) = self.workspace_for_group(key, cx) {
+            self.create_new_entry(&workspace, skip_worktree, window, cx);
+        } else {
+            self.open_workspace_and_create_entry(key, skip_worktree, window, cx);
+        }
+    }
+
     fn create_new_entry(
         &mut self,
         workspace: &Entity<Workspace>,
+        skip_worktree: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -4727,7 +4856,7 @@ impl Sidebar {
         if self.should_create_terminal_for_workspace(workspace, cx) {
             self.create_new_terminal(workspace, window, cx);
         } else {
-            self.create_new_thread(workspace, window, cx);
+            self.create_new_thread(workspace, skip_worktree, window, cx);
         }
     }
 
@@ -4745,6 +4874,7 @@ impl Sidebar {
     fn create_new_thread(
         &mut self,
         workspace: &Entity<Workspace>,
+        skip_worktree: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -4763,7 +4893,16 @@ impl Sidebar {
         let draft_id = workspace.update(cx, |workspace, cx| {
             let panel = workspace.panel::<AgentPanel>(cx)?;
             let draft_id = panel.update(cx, |panel, cx| {
-                panel.activate_new_thread(true, AgentThreadSource::Sidebar, window, cx);
+                if skip_worktree {
+                    panel.activate_new_thread(true, AgentThreadSource::Sidebar, window, cx);
+                } else {
+                    panel.new_thread_with_workspace(
+                        Some(workspace),
+                        AgentThreadSource::Sidebar,
+                        window,
+                        cx,
+                    );
+                }
                 panel.active_thread_id(cx)
             });
             workspace.focus_panel::<AgentPanel>(window, cx);
@@ -5690,6 +5829,19 @@ impl Render for Sidebar {
                 })
             })
             .child(self.render_sidebar_bottom_bar(cx))
+            .children(
+                self.thread_context_menu
+                    .as_ref()
+                    .map(|(menu, position, _)| {
+                        deferred(
+                            anchored()
+                                .position(*position)
+                                .anchor(gpui::Anchor::TopLeft)
+                                .child(menu.clone()),
+                        )
+                        .with_priority(3)
+                    }),
+            )
     }
 }
 

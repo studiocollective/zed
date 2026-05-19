@@ -1211,6 +1211,17 @@
     //
     // Default: true
     "show_merge_conflict_indicator": true,
+    // When enabled, "New Thread" creates a fresh git worktree and a new
+    // branch (with the same name as the worktree) before starting the
+    // thread. Requires the project to contain a git repository.
+    //
+    // Default: false
+    "new_thread_creates_worktree": false,
+    // The base branch to create new agent worktree branches from. When
+    // null, the current branch is used as the base.
+    //
+    // Default: null
+    "new_thread_worktree_base_branch": null,
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,

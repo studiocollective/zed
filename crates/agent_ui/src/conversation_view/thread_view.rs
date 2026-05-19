@@ -9215,12 +9215,19 @@ impl Render for ThreadView {
                 let likely_overflows = chars > 800;
                 let is_expanded = self.expanded_user_messages.contains(&entry_ix);
                 let is_constrained = likely_overflows && !is_expanded;
-                (entry_ix, markdown, fallback_text, likely_overflows, is_expanded, is_constrained)
+                (
+                    entry_ix,
+                    markdown,
+                    fallback_text,
+                    likely_overflows,
+                    is_expanded,
+                    is_constrained,
+                )
             });
         let pinned_user_message = latest_user_message.map(
             |(entry_ix, markdown, fallback_text, likely_overflows, is_expanded, is_constrained)| {
-                let style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx)
-                    .with_buffer_font(cx);
+                let style =
+                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_buffer_font(cx);
                 let body: AnyElement = if let Some(markdown) = markdown {
                     self.render_markdown(markdown, style, cx).into_any_element()
                 } else {
@@ -9245,9 +9252,7 @@ impl Render for ThreadView {
                             .text_xs()
                             .map(|this| {
                                 if is_constrained {
-                                    this.child(
-                                        div().max_h_64().overflow_hidden().child(body),
-                                    )
+                                    this.child(div().max_h_64().overflow_hidden().child(body))
                                 } else {
                                     this.child(body)
                                 }
@@ -9276,9 +9281,11 @@ impl Render for ThreadView {
                                     .size(IconSize::XSmall)
                                     .color(Color::Muted),
                                 )
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.toggle_user_message_expansion(entry_ix, cx);
-                                })),
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.toggle_user_message_expansion(entry_ix, cx);
+                                    },
+                                )),
                             ),
                         )
                     })

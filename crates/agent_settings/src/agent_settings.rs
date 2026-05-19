@@ -167,6 +167,8 @@ pub struct AgentSettings {
     pub message_editor_min_lines: usize,
     pub show_turn_stats: bool,
     pub show_merge_conflict_indicator: bool,
+    pub new_thread_creates_worktree: bool,
+    pub new_thread_worktree_base_branch: Option<String>,
     pub tool_permissions: ToolPermissions,
 }
 
@@ -671,6 +673,10 @@ impl Settings for AgentSettings {
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
             show_turn_stats: agent.show_turn_stats.unwrap(),
             show_merge_conflict_indicator: agent.show_merge_conflict_indicator.unwrap(),
+            new_thread_creates_worktree: agent.new_thread_creates_worktree.unwrap_or(false),
+            new_thread_worktree_base_branch: agent
+                .new_thread_worktree_base_branch
+                .filter(|s| !s.is_empty()),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
         }
     }
