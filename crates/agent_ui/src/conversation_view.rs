@@ -5860,9 +5860,19 @@ pub(crate) mod tests {
             let active = active.read(cx);
 
             assert_eq!(active.thread.read(cx).status(), ThreadStatus::Generating);
+            // After sending (or re-sending) a user message, the chat anchors
+            // the most recent user prompt to the top of the viewport — which
+            // disengages tail-follow until the user scrolls back to the bottom.
+            // The stale-stop fix this test guards against shouldn't undo that
+            // anchor by re-engaging follow or scrolling to the end.
             assert!(
-                active.list_state.is_following_tail(),
-                "stale stop events from the cancelled turn must not disable follow-tail for the new turn"
+                !active.list_state.is_following_tail(),
+                "tail-follow should remain disengaged after the anchor-to-top scroll triggered by the user's new turn"
+            );
+            let scroll_top = active.list_state.logical_scroll_top();
+            assert_eq!(
+                scroll_top.item_ix, 0,
+                "scroll position should remain anchored at the user prompt (index 0), not snapped to the end by the stale stop"
             );
         });
     }
