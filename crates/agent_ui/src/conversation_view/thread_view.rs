@@ -468,6 +468,35 @@ impl ThreadView {
             editor
         };
 
+        // Keep the title editor in sync with sidebar renames (which update
+        // the metadata store's title_override directly without going through
+        // AcpThread::set_title).
+        if let Some(store) = ThreadMetadataStore::try_global(cx)
+            && parent_session_id.is_none()
+        {
+            let title_editor = title_editor.clone();
+            subscriptions.push(
+                cx.observe_in(&store, window, move |this, store, window, cx| {
+                    if title_editor.read(cx).is_focused(window) {
+                        return;
+                    }
+                    let Some(metadata) = store.read(cx).entry(this.root_thread_id) else {
+                        return;
+                    };
+                    let title = metadata
+                        .title_override
+                        .clone()
+                        .or_else(|| this.thread.read(cx).title())
+                        .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
+                    title_editor.update(cx, |editor, cx| {
+                        if editor.text(cx) != title.as_ref() {
+                            editor.set_text(title, window, cx);
+                        }
+                    });
+                }),
+            );
+        }
+
         subscriptions.push(cx.subscribe_in(
             &entry_view_state,
             window,
