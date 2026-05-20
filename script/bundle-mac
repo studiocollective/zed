@@ -117,6 +117,26 @@ else
     echo "cargo::warning=Missing ${document_icon_source}; macOS document icons may not appear in Finder."
 fi
 
+# If a prebuilt .icns exists for this channel, swap it in over the one
+# cargo-bundle generated. Apple's `iconutil` (which produced our prebuilt
+# via script/make-mac-icon.sh) writes the layout/ordering that macOS's
+# icon services render most cleanly — cargo-bundle's packer is valid but
+# has been observed to leave subtle render artifacts in the Dock/Finder.
+prebuilt_icon_source="crates/zed/resources/app-icon-${channel}.icns"
+if [[ -f "${prebuilt_icon_source}" ]]; then
+    # cargo-bundle names the app icon `<bundle display name>.icns`, which
+    # for the dev channel is `Zed Dev.icns`. Match any single .icns next
+    # to our just-copied Document.icns so this doesn't drift if the bundle
+    # name changes per channel.
+    app_icon_target=$(find "${app_path}/Contents/Resources" -maxdepth 1 -name '*.icns' ! -name 'Document.icns' | head -n 1)
+    if [[ -n "${app_icon_target}" ]]; then
+        cp "${prebuilt_icon_source}" "${app_icon_target}"
+        echo "Swapped in prebuilt icon: ${prebuilt_icon_source} -> ${app_icon_target}"
+    else
+        echo "cargo::warning=Could not find cargo-bundle's app .icns inside ${app_path}/Contents/Resources to overwrite."
+    fi
+fi
+
 if [[ -n "${MACOS_CERTIFICATE:-}" && -n "${MACOS_CERTIFICATE_PASSWORD:-}" && -n "${APPLE_NOTARIZATION_KEY:-}" && -n "${APPLE_NOTARIZATION_KEY_ID:-}" && -n "${APPLE_NOTARIZATION_ISSUER_ID:-}" ]]; then
     can_code_sign=true
 
