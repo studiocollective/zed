@@ -1208,9 +1208,17 @@ unsafe fn set_dock_icon_from_bundle(app: id) {
         if icon_file == nil {
             return;
         }
-        let icns_extension = ns_string("icns");
+        // `CFBundleIconFile` may or may not include the `.icns` extension;
+        // both `"Zed Dev"` and `"Zed Dev.icns"` are valid in Info.plist.
+        // Join the resource name to the bundle's resource path directly
+        // (rather than `pathForResource:ofType:`, which silently fails
+        // when both halves of the filename are passed as one string).
+        let resource_path: id = msg_send![main_bundle, resourcePath];
+        if resource_path == nil {
+            return;
+        }
         let icon_path: id =
-            msg_send![main_bundle, pathForResource: icon_file ofType: icns_extension];
+            msg_send![resource_path, stringByAppendingPathComponent: icon_file];
         if icon_path == nil {
             return;
         }
