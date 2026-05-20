@@ -1184,10 +1184,53 @@ extern "C" fn will_finish_launching(_this: &mut Object, _: Sel, _: id) {
     }
 }
 
+/// Override the Dock icon at runtime by loading the bundle's `.icns`
+/// directly into an `NSImage` and calling `setApplicationIconImage:`.
+///
+/// macOS Tahoe's Tinted-mode (and Liquid Glass icon-jail chrome) only
+/// kicks in when the system performs its own icon-services lookup
+/// against the app bundle. When the icon is set programmatically via
+/// `setApplicationIconImage:` from a freshly-decoded bitmap, the Dock
+/// tile renders the raw image instead — matching how Tao-bundled apps
+/// (e.g. Tauri's) escape the system treatment.
+///
+/// Silently no-ops when the app is launched outside a bundle (e.g. via
+/// `cargo run`), when `CFBundleIconFile` is missing, or when the icon
+/// file fails to decode.
+unsafe fn set_dock_icon_from_bundle(app: id) {
+    unsafe {
+        let main_bundle: id = msg_send![class!(NSBundle), mainBundle];
+        if main_bundle == nil {
+            return;
+        }
+        let icon_file_key = ns_string("CFBundleIconFile");
+        let icon_file: id = msg_send![main_bundle, objectForInfoDictionaryKey: icon_file_key];
+        if icon_file == nil {
+            return;
+        }
+        let icns_extension = ns_string("icns");
+        let icon_path: id =
+            msg_send![main_bundle, pathForResource: icon_file ofType: icns_extension];
+        if icon_path == nil {
+            return;
+        }
+        let img: id = msg_send![class!(NSImage), alloc];
+        let img: id = msg_send![img, initWithContentsOfFile: icon_path];
+        if img == nil {
+            return;
+        }
+        let _: () = msg_send![app, setApplicationIconImage: img];
+        // `setApplicationIconImage:` retains; balance our +1 alloc.
+        let _: () = msg_send![img, release];
+    }
+}
+
 extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
+
+        set_dock_icon_from_bundle(app);
 
         let notification_center: *mut Object =
             msg_send![class!(NSNotificationCenter), defaultCenter];
