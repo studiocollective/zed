@@ -4717,6 +4717,31 @@ impl ThreadView {
                                         }
                                     })
                             )
+                            .when(likely_overflows && !editor_focus, |this| {
+                                this.child(
+                                    div().absolute().top_1().right_1().child(
+                                        IconButton::new(
+                                            ("expand_user_message", entry_ix),
+                                            if is_expanded {
+                                                IconName::ChevronUp
+                                            } else {
+                                                IconName::ChevronDown
+                                            },
+                                        )
+                                        .icon_size(IconSize::XSmall)
+                                        .icon_color(Color::Muted)
+                                        .style(ButtonStyle::Transparent)
+                                        .tooltip(Tooltip::text(if is_expanded {
+                                            "Collapse"
+                                        } else {
+                                            "Expand"
+                                        }))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.toggle_user_message_expansion(entry_ix, cx);
+                                        })),
+                                    ),
+                                )
+                            })
                             .when(editor_focus, |this| {
                                 let base_container = h_flex()
                                     .absolute()
@@ -4796,32 +4821,6 @@ impl ThreadView {
                                 }
                             }),
                     )
-                    .when(likely_overflows && !editor_focus, |this| {
-                        this.child(
-                            h_flex().pl_2().child(
-                                Button::new(("expand_user_message", entry_ix), if is_expanded {
-                                    "Show less"
-                                } else {
-                                    "Show more"
-                                })
-                                .style(ButtonStyle::Transparent)
-                                .label_size(LabelSize::XSmall)
-                                .color(Color::Muted)
-                                .end_icon(
-                                    Icon::new(if is_expanded {
-                                        IconName::ChevronUp
-                                    } else {
-                                        IconName::ChevronDown
-                                    })
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted),
-                                )
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.toggle_user_message_expansion(entry_ix, cx);
-                                })),
-                            ),
-                        )
-                    })
                     .into_any()
             }
             AgentThreadEntry::AssistantMessage(AssistantMessage {
@@ -5091,51 +5090,59 @@ impl ThreadView {
                 .pt_2()
                 .pb_3()
                 .px_2()
-                .gap_1p5()
                 .w_full()
                 .child(
                     div()
-                        .py_3()
-                        .px_2()
-                        .rounded_md()
-                        .bg(cx.theme().colors().editor_background)
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .shadow_md()
-                        .text_xs()
-                        .map(|this| {
-                            if is_constrained {
-                                this.child(div().max_h_64().overflow_hidden().child(body))
-                            } else {
-                                this.child(body)
-                            }
+                        .relative()
+                        .child(
+                            div()
+                                .py_3()
+                                .px_2()
+                                .rounded_md()
+                                .bg(cx.theme().colors().editor_background)
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .shadow_md()
+                                .text_xs()
+                                .map(|this| {
+                                    // Pinned bubble truncates earlier than the
+                                    // in-list copy — it's a glanceable reminder
+                                    // of what was sent, not the full prompt.
+                                    if is_constrained {
+                                        this.child(
+                                            div().max_h_32().overflow_hidden().child(body),
+                                        )
+                                    } else {
+                                        this.child(body)
+                                    }
+                                }),
+                        )
+                        .when(likely_overflows, |this| {
+                            this.child(
+                                div().absolute().top_1().right_1().child(
+                                    IconButton::new(
+                                        ("expand_pinned_user_message", entry_ix),
+                                        if is_expanded {
+                                            IconName::ChevronUp
+                                        } else {
+                                            IconName::ChevronDown
+                                        },
+                                    )
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .style(ButtonStyle::Transparent)
+                                    .tooltip(Tooltip::text(if is_expanded {
+                                        "Collapse"
+                                    } else {
+                                        "Expand"
+                                    }))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.toggle_user_message_expansion(entry_ix, cx);
+                                    })),
+                                ),
+                            )
                         }),
                 )
-                .when(likely_overflows, |this| {
-                    this.child(
-                        h_flex().pl_2().child(
-                            Button::new(
-                                ("expand_pinned_user_message", entry_ix),
-                                if is_expanded { "Show less" } else { "Show more" },
-                            )
-                            .style(ButtonStyle::Transparent)
-                            .label_size(LabelSize::XSmall)
-                            .color(Color::Muted)
-                            .end_icon(
-                                Icon::new(if is_expanded {
-                                    IconName::ChevronUp
-                                } else {
-                                    IconName::ChevronDown
-                                })
-                                .size(IconSize::XSmall)
-                                .color(Color::Muted),
-                            )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.toggle_user_message_expansion(entry_ix, cx);
-                            })),
-                        ),
-                    )
-                })
                 .into_any_element(),
         )
     }
