@@ -57,9 +57,15 @@ iconset="$out_dir/$name.iconset"
 #    at the target resolution rather than its 72 DPI default; for a PNG
 #    input this is a no-op resize. Render to a temp file first so we
 #    don't clobber the source when it's already a PNG at this path.
+#
+#    `PNG32:` forces 8-bit RGBA (PNG color type 6) regardless of how few
+#    colors the source uses. macOS's icon services apply a different
+#    visual treatment to grayscale+alpha icons (color type 4) — they
+#    pick up a subtle shiny highlight band that RGBA icons don't get —
+#    so we always go through the RGBA path.
 master_tmp="$(mktemp -t "$name.XXXXXX").png"
 trap 'rm -f "$master_tmp"' EXIT
-convert -background none -density 1024 "$input" -resize 1024x1024 "$master_tmp"
+convert -background none -density 1024 "$input" -resize 1024x1024 PNG32:"$master_tmp"
 cp "$master_tmp" "$master"
 
 # 2. Build the .iconset directory with every retina pair iconutil wants.
