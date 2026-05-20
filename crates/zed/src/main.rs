@@ -812,6 +812,10 @@ fn main() {
                     },
                 );
 
+                cx.set_app_icon_override(
+                    theme_settings::ThemeSettings::get_global(cx).override_app_icon,
+                );
+
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
                 if &http.base_url() != new_host {
                     http.set_base_url(new_host);

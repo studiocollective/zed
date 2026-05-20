@@ -668,6 +668,21 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn set_app_icon_override(&self, enabled: bool) {
+        unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            if enabled {
+                set_dock_icon_from_bundle(app);
+            } else {
+                // Setting the application icon to nil restores macOS's
+                // default lookup (bundle .icns via icon-services), so the
+                // system's Tinted-mode treatment / Liquid Glass icon-jail
+                // chrome takes over again.
+                let _: () = msg_send![app, setApplicationIconImage: nil];
+            }
+        }
+    }
+
     fn register_url_scheme(&self, scheme: &str) -> Task<anyhow::Result<()>> {
         // API only available post Monterey
         // https://developer.apple.com/documentation/appkit/nsworkspace/3753004-setdefaultapplicationaturl
@@ -1238,6 +1253,8 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
         let app: id = msg_send![APP_CLASS, sharedApplication];
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
 
+        // Apply the runtime icon override by default; Zed will undo it
+        // after settings load if the user has `override_app_icon: false`.
         set_dock_icon_from_bundle(app);
 
         let notification_center: *mut Object =

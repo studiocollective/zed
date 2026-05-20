@@ -1236,6 +1236,12 @@ impl App {
         self.text_rendering_mode.set(mode);
     }
 
+    /// Apply or clear the runtime app-icon override (macOS only).
+    /// See [`crate::Platform::set_app_icon_override`].
+    pub fn set_app_icon_override(&self, enabled: bool) {
+        self.platform.set_app_icon_override(enabled);
+    }
+
     /// Returns the current text rendering mode for the application.
     pub fn text_rendering_mode(&self) -> TextRenderingMode {
         self.text_rendering_mode.get()

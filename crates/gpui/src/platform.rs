@@ -165,6 +165,11 @@ pub trait Platform: 'static {
 
     fn open_url(&self, url: &str);
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
+
+    /// Override the app icon at runtime, or clear a previously set override.
+    /// macOS-only: maps to `-[NSApp setApplicationIconImage:]`. On other
+    /// platforms this is a no-op.
+    fn set_app_icon_override(&self, _enabled: bool) {}
     fn register_url_scheme(&self, url: &str) -> Task<Result<()>>;
 
     fn prompt_for_paths(

@@ -81,6 +81,12 @@ pub struct ThemeSettings {
     pub theme_overrides: HashMap<String, settings::ThemeStyleContent>,
     /// The current icon theme selection.
     pub icon_theme: IconThemeSelection,
+    /// Whether Zed overrides its Dock icon at runtime via
+    /// `-[NSApp setApplicationIconImage:]` (macOS only).
+    ///
+    /// `true` → custom icon, no system tinting. `false` → system handles it,
+    /// icon follows Tinted-mode accent.
+    pub override_app_icon: bool,
     /// The density of the UI.
     /// Note: This setting is still experimental. See [this tracking issue](
     pub ui_density: UiDensity,
@@ -674,6 +680,7 @@ impl settings::Settings for ThemeSettings {
             experimental_theme_overrides: content.experimental_theme_overrides.clone(),
             theme_overrides: content.theme_overrides.clone(),
             icon_theme: icon_theme_selection,
+            override_app_icon: content.override_app_icon.unwrap_or(true),
             ui_density: ui_density_from_settings(content.ui_density.unwrap_or_default()),
             unnecessary_code_fade: content.unnecessary_code_fade.unwrap().0.clamp(0.0, 0.9),
         }

@@ -163,6 +163,22 @@ pub struct ThemeSettingsContent {
     /// The name of the icon theme to use.
     pub icon_theme: Option<IconThemeSelection>,
 
+    /// Whether Zed overrides its Dock icon at runtime via
+    /// `-[NSApp setApplicationIconImage:]` (macOS only).
+    ///
+    /// When `true`, Zed loads its bundle icon directly into an `NSImage` at
+    /// startup and hands it to the Dock — this bypasses macOS Tahoe's
+    /// Tinted-mode wash and Liquid Glass icon-jail chrome on the *running*
+    /// Dock tile. Set to `false` if you prefer the system to render the
+    /// icon through its normal appearance pipeline (e.g. you want the
+    /// icon to follow the system Tinted accent color).
+    ///
+    /// Has no effect outside macOS Tahoe (Darwin 25+) and no effect on the
+    /// resting Dock tile, Finder, or Spotlight icons.
+    ///
+    /// Default: true
+    pub override_app_icon: Option<bool>,
+
     /// UNSTABLE: Expect many elements to be broken.
     ///
     // Controls the density of the UI.
