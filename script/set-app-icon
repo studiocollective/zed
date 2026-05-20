@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# set-app-icon — override an app's Finder icon using Apple's setIcon:forFile:options:
+# (the programmatic equivalent of the Get Info → Cmd-C / Cmd-V copy-paste trick).
+#
+# Useful on macOS Tahoe because a custom Finder icon is stored as the
+# bundle's `Icon\r` resource + `com.apple.FinderInfo` xattr, and the
+# Finder/Dock render it as a raw image — bypassing the "icon jail"
+# chrome that Tahoe applies to apps whose Contents/Resources/*.icns
+# isn't a proper Liquid Glass asset catalog.
+#
+# Usage:
+#   script/set-app-icon [-q] <icon> [target]
+#
+# Defaults:
+#   icon    crates/zed/resources/app-icon-${channel}.icns or .png
+#           (channel read from crates/zed/RELEASE_CHANNEL, default "dev")
+#   target  /Applications/Zed ${Channel}.app
+#           where Channel is the title-cased channel name ("Dev", "Preview", etc.)
+#
+# Examples:
+#   # Apply the dev icon to the installed Zed Dev.app
+#   script/set-app-icon
+#
+#   # Apply a specific icon to a specific bundle
+#   script/set-app-icon path/to/icon.icns "/Applications/Zed Dev.app"
+#
+#   # Apply with no Dock/Finder restart (manual: killall Dock Finder)
+#   script/set-app-icon -q ~/Downloads/icon-code-xml.icns
+#
+# After applying, the script restarts Dock and Finder so the cached
+# icon refreshes. Pass -q to skip the restart.
+
+set -euo pipefail
+
+restart_ui=true
+if [[ "${1:-}" == "-q" ]]; then
+    restart_ui=false
+    shift
+fi
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+
+channel="dev"
+if [[ -f "$repo_root/crates/zed/RELEASE_CHANNEL" ]]; then
+    channel=$(<"$repo_root/crates/zed/RELEASE_CHANNEL")
+fi
+
+# Title-case the channel for the app name: dev → Dev, preview → Preview.
+case "$channel" in
+    stable) channel_titled="" ;;
+    *)      channel_titled="$(echo "$channel" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')" ;;
+esac
+
+icon="${1:-}"
+if [[ -z "$icon" ]]; then
+    for candidate in \
+        "$repo_root/crates/zed/resources/app-icon-${channel}.icns" \
+        "$repo_root/crates/zed/resources/app-icon-${channel}@2x.png" \
+        "$repo_root/crates/zed/resources/app-icon-${channel}.png"; do
+        if [[ -f "$candidate" ]]; then
+            icon="$candidate"
+            break
+        fi
+    done
+fi
+
+if [[ -z "$icon" || ! -f "$icon" ]]; then
+    echo "error: no source icon found. Pass one as the first argument." >&2
+    exit 1
+fi
+
+target="${2:-}"
+if [[ -z "$target" ]]; then
+    if [[ -z "$channel_titled" ]]; then
+        target="/Applications/Zed.app"
+    else
+        target="/Applications/Zed ${channel_titled}.app"
+    fi
+fi
+
+if [[ ! -d "$target" && ! -f "$target" ]]; then
+    echo "error: target does not exist: $target" >&2
+    exit 1
+fi
+
+icon_abs="$(cd "$(dirname "$icon")" && pwd)/$(basename "$icon")"
+target_abs="$(cd "$(dirname "$target")" && pwd)/$(basename "$target")"
+
+echo "Setting icon: $icon_abs -> $target_abs"
+
+# Use JavaScript for Automation (built into macOS via osascript) so we
+# don't depend on pip / PyObjC, which aren't reliably present on stock
+# system Pythons.
+/usr/bin/osascript -l JavaScript - "$icon_abs" "$target_abs" <<'JXA'
+function run(argv) {
+    ObjC.import('Cocoa');
+    const iconPath = argv[0];
+    const targetPath = argv[1];
+    const img = $.NSImage.alloc.initWithContentsOfFile(iconPath);
+    if (img.isNil()) {
+        throw new Error('failed to load icon: ' + iconPath);
+    }
+    const ok = $.NSWorkspace.sharedWorkspace.setIconForFileOptions(img, targetPath, 0);
+    if (!ok) {
+        throw new Error('failed to set icon on: ' + targetPath);
+    }
+}
+JXA
+
+if [[ "$restart_ui" == true ]]; then
+    echo "Restarting Dock and Finder to flush icon cache…"
+    killall Dock 2>/dev/null || true
+    killall Finder 2>/dev/null || true
+fi
+
+echo "Done. The custom Finder icon is now stored on $target_abs."
