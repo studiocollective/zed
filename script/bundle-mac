@@ -242,6 +242,11 @@ function sign_app_binaries() {
             echo "Created application bundle:"
             echo "$app_path"
         fi
+    elif [ "$local_install" = true ]; then
+        # The install branch above already moved $app_path into /Applications,
+        # so the DMG-staging mv would fail with "No such file or directory".
+        # Skip the DMG entirely when we've already installed.
+        echo "Local install requested - skipping DMG creation"
     else
         dmg_target_directory="target/${target_triple}/${target_dir}"
         dmg_source_directory="${dmg_target_directory}/dmg"
