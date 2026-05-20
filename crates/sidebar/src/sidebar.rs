@@ -2517,8 +2517,14 @@ impl Sidebar {
 
         let is_archived_search_focused = matches!(&self.view, SidebarView::Archive(archive) if archive.read(cx).is_filter_editor_focused(window, cx));
 
+        // Use the `searching` identifier (which the keymap uses to suppress
+        // the Space → menu::Confirm binding) whenever any inline editor inside
+        // the sidebar holds focus — not just the filter, but also an in-place
+        // rename editor. Otherwise typing a space in the rename input commits
+        // the rename instead of inserting a space.
         let identifier = if self.filter_editor.focus_handle(cx).is_focused(window)
             || is_archived_search_focused
+            || self.renaming_thread.is_some()
         {
             "searching"
         } else {
