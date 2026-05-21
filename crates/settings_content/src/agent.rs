@@ -71,6 +71,24 @@ pub enum ThinkingBlockDisplay {
     AlwaysCollapsed,
 }
 
+/// Agent settings that may be overridden on a per-project basis via a
+/// project's `.zed/settings.json`, in addition to the user's global settings.
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
+pub struct ProjectAgentSettingsContent {
+    /// When enabled, "New Thread" creates a fresh git worktree and a new
+    /// branch (with the same name as the worktree) before starting the
+    /// thread. Requires the project to contain a git repository.
+    ///
+    /// Default: false
+    pub new_thread_creates_worktree: Option<bool>,
+    /// The base branch to create new agent worktree branches from. When
+    /// unset, the current branch is used as the base.
+    ///
+    /// Default: null
+    pub new_thread_worktree_base_branch: Option<String>,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -200,17 +218,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub show_merge_conflict_indicator: Option<bool>,
-    /// When enabled, "New Thread" creates a fresh git worktree and a new
-    /// branch (with the same name as the worktree) before starting the
-    /// thread. Requires the project to contain a git repository.
-    ///
-    /// Default: false
-    pub new_thread_creates_worktree: Option<bool>,
-    /// The base branch to create new agent worktree branches from. When
-    /// unset, the current branch is used as the base.
-    ///
-    /// Default: null
-    pub new_thread_worktree_base_branch: Option<String>,
+    /// Agent settings that may be overridden on a per-project basis via a
+    /// project's `.zed/settings.json`.
+    #[serde(flatten)]
+    pub project: ProjectAgentSettingsContent,
     /// Per-tool permission rules for granular control over which tool actions
     /// require confirmation.
     ///

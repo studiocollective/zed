@@ -16,7 +16,7 @@ use settings::{
     DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
     SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
-    merge_from::MergeFrom, update_settings_file, update_settings_file_with_completion,
+    update_settings_file, update_settings_file_with_completion,
 };
 
 pub use crate::agent_profile::*;

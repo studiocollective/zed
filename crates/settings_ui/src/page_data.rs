@@ -7749,6 +7749,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                         settings_content
                             .agent
                             .as_ref()?
+                            .project
                             .new_thread_creates_worktree
                             .as_ref()
                     },
@@ -7756,11 +7757,12 @@ fn ai_page(cx: &App) -> SettingsPage {
                         settings_content
                             .agent
                             .get_or_insert_default()
+                            .project
                             .new_thread_creates_worktree = value;
                     },
                 }),
                 metadata: None,
-                files: USER,
+                files: PROJECT,
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "New Thread Worktree Base Branch",
@@ -7771,6 +7773,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                         settings_content
                             .agent
                             .as_ref()?
+                            .project
                             .new_thread_worktree_base_branch
                             .as_ref()
                             .or(DEFAULT_EMPTY_STRING)
@@ -7779,6 +7782,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                         settings_content
                             .agent
                             .get_or_insert_default()
+                            .project
                             .new_thread_worktree_base_branch =
                             value.filter(|s| !s.is_empty());
                     },
@@ -7787,7 +7791,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                     placeholder: Some("main"),
                     ..Default::default()
                 })),
-                files: USER,
+                files: PROJECT,
             }),
         ]);
 

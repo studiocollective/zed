@@ -18,7 +18,8 @@ use db::kvp::{Dismissable, KeyValueStore};
 use itertools::Itertools;
 use project::AgentId;
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelProviderSetting, LanguageModelSelection};
+use settings::{LanguageModelProviderSetting, LanguageModelSelection, SettingsLocation};
+use util::rel_path::RelPath;
 
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
@@ -1347,16 +1348,24 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let settings = AgentSettings::get_global(cx);
-        if !settings.new_thread_creates_worktree {
-            return false;
-        }
-        let base = settings.new_thread_worktree_base_branch.clone();
-
         let project = self.project.read(cx);
         if project.is_via_collab() || project.repositories(cx).is_empty() {
             return false;
         }
+
+        let worktree_id = project
+            .visible_worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).id());
+        let settings_location = worktree_id.map(|worktree_id| SettingsLocation {
+            worktree_id,
+            path: RelPath::empty(),
+        });
+        let settings = AgentSettings::get(settings_location, cx);
+        if !settings.new_thread_creates_worktree {
+            return false;
+        }
+        let base = settings.new_thread_worktree_base_branch.clone();
 
         window.dispatch_action(
             Box::new(zed_actions::CreateWorktree {
