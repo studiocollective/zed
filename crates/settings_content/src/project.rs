@@ -13,8 +13,8 @@ use settings_macros::{MergeFrom, with_fallible_options};
 use util::serde::default_true;
 
 use crate::{
-    AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectTerminalSettingsContent,
-    RootUserSettings, SaturatingBool, fallible_options,
+    AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectAgentSettingsContent,
+    ProjectTerminalSettingsContent, RootUserSettings, SaturatingBool, fallible_options,
 };
 
 #[with_fallible_options]
@@ -60,6 +60,15 @@ pub struct ProjectSettingsContent {
     pub lsp: LspSettingsMap,
 
     pub terminal: Option<ProjectTerminalSettingsContent>,
+
+    /// Per-project overrides for agent settings. Receives the
+    /// project-overridable subset of `agent.{field}` JSON keys (those
+    /// declared inside `AgentSettingsContent.project`'s
+    /// `ProjectAgentSettingsContent`) when a `.zed/settings.json` is
+    /// parsed — user files parse as `SettingsContent` instead and route
+    /// the same keys into `content.agent.project.{field}` via the
+    /// `#[serde(flatten)]` inside `AgentSettingsContent`.
+    pub agent: Option<ProjectAgentSettingsContent>,
 
     /// Configuration for Debugger-related features
     #[serde(default)]

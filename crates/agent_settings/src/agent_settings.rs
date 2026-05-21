@@ -16,7 +16,7 @@ use settings::{
     DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
     SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
-    update_settings_file, update_settings_file_with_completion,
+    merge_from::MergeFrom, update_settings_file, update_settings_file_with_completion,
 };
 
 pub use crate::agent_profile::*;
@@ -629,6 +629,18 @@ pub fn normalize_path(raw: &str) -> String {
 impl Settings for AgentSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let agent = content.agent.clone().unwrap();
+        // The two `new_thread_*worktree*` fields live at two Rust paths so
+        // both file types can parse them:
+        //   - User files parse as `SettingsContent`, so `agent.{field}` JSON
+        //     lands in `content.agent.project.{field}` (via flatten).
+        //   - Project files parse as `ProjectSettingsContent` only — the
+        //     `content.agent` (`Option<AgentSettingsContent>`) wrapper is
+        //     never instantiated for them, so we need
+        //     `ProjectSettingsContent.agent: Option<ProjectAgentSettingsContent>`
+        //     to receive `agent.{field}` from `.zed/settings.json`.
+        // Read both and overlay project on top of user.
+        let mut project_agent = agent.project.clone();
+        project_agent.merge_from_option(content.project.agent.as_ref());
         Self {
             enabled: agent.enabled.unwrap(),
             button: agent.button.unwrap(),
@@ -673,8 +685,10 @@ impl Settings for AgentSettings {
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
             show_turn_stats: agent.show_turn_stats.unwrap(),
             show_merge_conflict_indicator: agent.show_merge_conflict_indicator.unwrap(),
-            new_thread_creates_worktree: agent.new_thread_creates_worktree.unwrap_or(false),
-            new_thread_worktree_base_branch: agent
+            new_thread_creates_worktree: project_agent
+                .new_thread_creates_worktree
+                .unwrap_or(false),
+            new_thread_worktree_base_branch: project_agent
                 .new_thread_worktree_base_branch
                 .filter(|s| !s.is_empty()),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
