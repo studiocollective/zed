@@ -184,6 +184,8 @@ pub struct WorktreeEntry {
     pub name: String,
     pub kind: EntryKind,
     pub is_ignored: bool,
+    /// On-disk size — the graph sizes file circles by it.
+    pub size_bytes: u64,
 }
 
 #[derive(Debug, Serialize)]
