@@ -103,6 +103,11 @@ impl Connection {
     ) -> Result<Task<Result<serde_json::Value>>, Command> {
         let agents = self.agents().clone();
         match command {
+            // A subprocess, not a Zed model call — run it off the read loop.
+            Command::GitStatus => {
+                let root = self.workspace.root().to_path_buf();
+                Ok(cx.background_spawn(async move { to_value(crate::git::status(&root).await?) }))
+            }
             Command::ThreadList { agent_id } => Ok(cx.spawn(async move |cx| {
                 to_value(AgentHub::list_threads(&agents, agent_id, cx).await?)
             })),
@@ -186,7 +191,10 @@ impl Connection {
                 })?;
                 Ok(serde_json::Value::Null)
             }
-            Command::ThreadList { .. } | Command::ThreadOpen { .. } | Command::ThreadDelete { .. } => {
+            Command::GitStatus
+            | Command::ThreadList { .. }
+            | Command::ThreadOpen { .. }
+            | Command::ThreadDelete { .. } => {
                 anyhow::bail!("command must be dispatched through dispatch_slow")
             }
             Command::ThreadClose { thread_id } => {

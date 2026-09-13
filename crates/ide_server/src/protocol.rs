@@ -20,6 +20,8 @@ pub enum Command {
     },
     #[serde(rename = "buffer.read")]
     BufferRead { path: String },
+    #[serde(rename = "git.status")]
+    GitStatus,
     #[serde(rename = "terminal.create")]
     TerminalCreate { cols: u16, rows: u16 },
     #[serde(rename = "terminal.input", rename_all = "camelCase")]
@@ -191,6 +193,23 @@ pub enum EntryKind {
 pub struct BufferContents {
     pub path: String,
     pub text: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStatus {
+    /// `None` when detached or the root is not a git repository.
+    pub branch: Option<String>,
+    pub changed: Vec<GitChange>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitChange {
+    /// Repo-relative path (the current path for renames).
+    pub path: String,
+    /// The two-letter porcelain XY code, trimmed (`M`, `A`, `D`, `??`, …).
+    pub status: String,
 }
 
 #[derive(Debug, Serialize)]
