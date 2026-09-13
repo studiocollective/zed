@@ -90,6 +90,7 @@ impl HeadlessWorkspace {
                         EntryKind::File
                     },
                     is_ignored: entry.is_ignored,
+                    size_bytes: entry.size,
                 })
                 .collect()
         });
