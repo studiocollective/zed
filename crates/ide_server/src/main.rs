@@ -2,6 +2,7 @@ mod agent;
 mod connection;
 mod git;
 mod protocol;
+mod prefs;
 mod terminal;
 mod workspace;
 

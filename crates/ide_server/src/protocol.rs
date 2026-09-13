@@ -22,6 +22,10 @@ pub enum Command {
     BufferRead { path: String },
     #[serde(rename = "git.status")]
     GitStatus,
+    #[serde(rename = "settings.all")]
+    SettingsAll,
+    #[serde(rename = "settings.set")]
+    SettingsSet { key: String, value: serde_json::Value },
     #[serde(rename = "terminal.create")]
     TerminalCreate { cols: u16, rows: u16 },
     #[serde(rename = "terminal.input", rename_all = "camelCase")]
