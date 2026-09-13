@@ -22,6 +22,8 @@ pub enum Command {
     BufferRead { path: String },
     #[serde(rename = "git.status")]
     GitStatus,
+    #[serde(rename = "git.sizes")]
+    GitSizes,
     #[serde(rename = "settings.all")]
     SettingsAll,
     #[serde(rename = "settings.set")]
@@ -207,6 +209,22 @@ pub struct GitStatus {
     /// `None` when detached or the root is not a git repository.
     pub branch: Option<String>,
     pub changed: Vec<GitChange>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitSizes {
+    pub dirs: Vec<DirStat>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirStat {
+    /// Repo-relative directory ('' = root).
+    pub path: String,
+    /// Σ over tracked files under it of the UI's log-scaled file mass.
+    pub log_mass: f64,
+    pub bytes: u64,
 }
 
 #[derive(Debug, Serialize)]
