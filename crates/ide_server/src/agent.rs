@@ -434,6 +434,11 @@ fn thread_entry(entry: &AgentThreadEntry, cx: &App) -> ThreadEntry {
                     .collect::<Vec<_>>()
                     .join("\n\n"),
                 permission_options: options,
+                locations: tool_call
+                    .locations
+                    .iter()
+                    .map(|location| location.path.display().to_string())
+                    .collect(),
             }
         }
         AgentThreadEntry::CompletedPlan(entries) => ThreadEntry::Plan {
