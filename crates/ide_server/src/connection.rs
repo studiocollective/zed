@@ -108,6 +108,14 @@ impl Connection {
                 let root = self.workspace.root().to_path_buf();
                 Ok(cx.background_spawn(async move { to_value(crate::git::status(&root).await?) }))
             }
+            // Disk I/O — also off the read loop.
+            Command::SettingsAll => {
+                Ok(cx.background_spawn(async move { to_value(crate::prefs::all()?) }))
+            }
+            Command::SettingsSet { key, value } => Ok(cx.background_spawn(async move {
+                crate::prefs::set(key, value)?;
+                Ok(serde_json::Value::Null)
+            })),
             Command::ThreadList { agent_id } => Ok(cx.spawn(async move |cx| {
                 to_value(AgentHub::list_threads(&agents, agent_id, cx).await?)
             })),
@@ -192,6 +200,8 @@ impl Connection {
                 Ok(serde_json::Value::Null)
             }
             Command::GitStatus
+            | Command::SettingsAll
+            | Command::SettingsSet { .. }
             | Command::ThreadList { .. }
             | Command::ThreadOpen { .. }
             | Command::ThreadDelete { .. } => {
