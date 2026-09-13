@@ -379,6 +379,34 @@ impl AgentHub {
     }
 }
 
+/// Path-ish strings out of a tool call's raw input: values under
+/// path-named keys, plus any slash-containing whitespace-free string.
+fn collect_input_paths(value: &serde_json::Value, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, val) in map {
+                if let serde_json::Value::String(text) = val {
+                    let path_key = matches!(
+                        key.as_str(),
+                        "file_path" | "filePath" | "path" | "abs_path" | "notebook_path" | "cwd"
+                    );
+                    if path_key || (text.contains('/') && !text.contains(char::is_whitespace) && text.len() < 300) {
+                        out.push(text.clone());
+                    }
+                } else {
+                    collect_input_paths(val, out);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_input_paths(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn thread_entry(entry: &AgentThreadEntry, cx: &App) -> ThreadEntry {
     match entry {
         AgentThreadEntry::UserMessage(message) => ThreadEntry::User {
@@ -434,11 +462,22 @@ fn thread_entry(entry: &AgentThreadEntry, cx: &App) -> ThreadEntry {
                     .collect::<Vec<_>>()
                     .join("\n\n"),
                 permission_options: options,
-                locations: tool_call
-                    .locations
-                    .iter()
-                    .map(|location| location.path.display().to_string())
-                    .collect(),
+                locations: {
+                    // Explicit ACP locations when the agent reports
+                    // them, plus paths mined from the tool call's raw
+                    // JSON input (file_path/path args, grep targets) —
+                    // coverage varies by agent, the input never lies.
+                    let mut paths: Vec<String> = tool_call
+                        .locations
+                        .iter()
+                        .map(|location| location.path.display().to_string())
+                        .collect();
+                    if let Some(input) = &tool_call.raw_input {
+                        collect_input_paths(input, &mut paths);
+                    }
+                    paths.dedup();
+                    paths
+                },
             }
         }
         AgentThreadEntry::CompletedPlan(entries) => ThreadEntry::Plan {
