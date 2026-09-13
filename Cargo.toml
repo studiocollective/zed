@@ -105,6 +105,7 @@ members = [
     "crates/http_client",
     "crates/http_client_tls",
     "crates/icons",
+    "crates/ide_server",
     "crates/image_viewer",
     "crates/input_latency_ui",
     "crates/inspector_ui",
