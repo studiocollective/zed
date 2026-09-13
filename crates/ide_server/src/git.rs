@@ -67,6 +67,23 @@ async fn run_git(root: &Path, args: &[&str]) -> Result<String> {
     String::from_utf8(output.stdout).context("git output was not utf-8")
 }
 
+const CODE_EXTS: &[&str] = &[
+    "rs", "ts", "tsx", "js", "jsx", "mjs", "py", "go", "c", "h", "cpp", "cc", "hpp", "swift",
+    "kt", "java", "rb", "sh", "bash", "zig", "lua", "sql", "css", "html", "glsl", "wgsl",
+];
+
+fn mass_factor(path: &str) -> f64 {
+    let lower = path.to_ascii_lowercase();
+    let segment_hit = lower.split('/').any(|seg| {
+        matches!(seg, "tests" | "test" | "__tests__" | "specs" | "spec" | "golden" | "docs" | "doc" | "fixtures" | "snapshots")
+    });
+    let name = lower.rsplit('/').next().unwrap_or(&lower);
+    let test_name = name.contains(".test.") || name.contains(".spec.") || name.ends_with("_test.rs");
+    let ext = name.rsplit('.').next().unwrap_or("");
+    let non_code = !CODE_EXTS.contains(&ext);
+    if segment_hit || test_name || non_code { 0.35 } else { 1.0 }
+}
+
 /// Per-directory mass from `git ls-tree -r -l HEAD`: for every tracked
 /// blob, its size feeds a log-scaled mass (matching the UI's file
 /// curve) summed into every ancestor directory. This is what lets a
@@ -92,7 +109,10 @@ pub async fn sizes(root: &Path) -> Result<GitSizes> {
             continue;
         }
         let bytes: u64 = size.parse().unwrap_or(0);
-        let file_mass = 1.0 + (1.0 + bytes as f64 / 256.0).log2();
+        // Non-code carries a heavy discount (matching the client's
+        // categorization): tests, golden fixtures, docs, and config
+        // shouldn't outweigh the code they orbit.
+        let file_mass = (1.0 + (1.0 + bytes as f64 / 256.0).log2()) * mass_factor(path);
         let mut dir = path;
         while let Some(slash) = dir.rfind('/') {
             dir = &dir[..slash];
