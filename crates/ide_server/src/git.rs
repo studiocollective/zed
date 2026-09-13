@@ -1,4 +1,4 @@
-use crate::protocol::{DirStat, GitChange, GitSizes, GitStatus};
+use crate::protocol::{DirStat, FileStat, GitChange, GitSizes, GitStatus, GitTree};
 use anyhow::{Context as _, Result};
 use smol::process::Command;
 use std::path::Path;
@@ -134,4 +134,32 @@ pub async fn sizes(root: &Path) -> Result<GitSizes> {
         .collect();
     dirs.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(GitSizes { dirs })
+}
+
+/// Every tracked file with its size, one payload — the circle packing
+/// renders the whole repository from this instead of walking
+/// directories lazily.
+pub async fn tree(root: &Path) -> Result<GitTree> {
+    if run_git(root, &["rev-parse", "--git-dir"]).await.is_err() {
+        return Ok(GitTree { files: Vec::new() });
+    }
+    let raw = run_git(root, &["ls-tree", "-r", "-l", "HEAD"]).await?;
+    let mut files = Vec::new();
+    for line in raw.lines() {
+        let Some((meta, path)) = line.split_once('\t') else { continue };
+        let mut fields = meta.split_whitespace();
+        let (Some(_mode), Some(kind), Some(_oid), Some(size)) =
+            (fields.next(), fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        if kind != "blob" {
+            continue;
+        }
+        files.push(FileStat {
+            path: path.to_string(),
+            bytes: size.parse().unwrap_or(0),
+        });
+    }
+    Ok(GitTree { files })
 }

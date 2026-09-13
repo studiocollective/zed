@@ -24,6 +24,8 @@ pub enum Command {
     GitStatus,
     #[serde(rename = "git.sizes")]
     GitSizes,
+    #[serde(rename = "git.tree")]
+    GitTree,
     #[serde(rename = "settings.all")]
     SettingsAll,
     #[serde(rename = "settings.set")]
@@ -227,6 +229,19 @@ pub struct DirStat {
     pub path: String,
     /// Σ over tracked files under it of the UI's log-scaled file mass.
     pub log_mass: f64,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitTree {
+    pub files: Vec<FileStat>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileStat {
+    pub path: String,
     pub bytes: u64,
 }
 
