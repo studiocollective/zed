@@ -1,3 +1,4 @@
+mod agent;
 mod connection;
 mod protocol;
 mod terminal;
@@ -10,14 +11,14 @@ use connection::Connection;
 use extension::ExtensionHostProxy;
 use fs::RealFs;
 use gpui::http_client::read_proxy_from_env;
-use gpui::{App, AppContext as _, Entity};
+use gpui::{App, AppContext as _, Entity, UpdateGlobal as _};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use project::{LocalProjectFlags, Project};
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
-use settings::Settings as _;
+use settings::{Settings as _, SettingsStore};
 use smol::net::TcpListener;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -93,11 +94,34 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+/// External ACP agents are configured under `agent_servers` in the user's Zed
+/// settings, so read that file once so the same agents show up here.
+fn load_user_settings(cx: &mut App) {
+    let path = paths::settings_file();
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            log::warn!("reading {}: {error}", path.display());
+            return;
+        }
+    };
+    SettingsStore::update_global(cx, |store, cx| {
+        let result = store.set_user_settings(&content, cx);
+        if let settings::ParseStatus::Failed { error } = &result.parse_status {
+            log::warn!("parsing {}: {error}", path.display());
+        }
+    });
+}
+
 fn init_project(cx: &mut App) -> Result<Entity<Project>> {
     let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"), None, None);
     release_channel::init(app_version, cx);
     gpui_tokio::init(cx);
     settings::init(cx);
+    load_user_settings(cx);
+    feature_flags::FeatureFlagStore::init(cx);
+    language_model::init(cx);
 
     let proxy_url = ProxySettings::get_global(cx)
         .proxy
@@ -126,6 +150,7 @@ fn init_project(cx: &mut App) -> Result<Entity<Project>> {
 
     extension::init(cx);
     let _extension_host_proxy = ExtensionHostProxy::global(cx);
+    project::AgentRegistryStore::init_global(cx, fs.clone(), client.http_client());
 
     let (mut node_options_tx, node_options_rx) = watch::channel(None);
     node_options_tx

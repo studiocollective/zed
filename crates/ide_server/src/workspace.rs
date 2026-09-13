@@ -1,6 +1,7 @@
+use crate::agent::AgentHub;
 use crate::protocol::{BufferContents, EntryKind, WorkspaceInfo, WorktreeEntry};
 use anyhow::{Context as _, Result, anyhow};
-use gpui::{AsyncApp, Entity};
+use gpui::{AppContext as _, AsyncApp, Entity};
 use project::{Project, ProjectPath};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,6 +13,7 @@ use worktree::Worktree;
 pub struct HeadlessWorkspace {
     project: Entity<Project>,
     worktree: Entity<Worktree>,
+    agents: Entity<AgentHub>,
     root: PathBuf,
 }
 
@@ -34,9 +36,11 @@ impl HeadlessWorkspace {
                 .ok_or_else(|| anyhow!("worktree is not local"))
         })?;
         scan_complete.await;
+        let agents = cx.new(|_| AgentHub::new(project.clone(), root.clone()));
         Ok(Self {
             project,
             worktree,
+            agents,
             root,
         })
     }
@@ -124,5 +128,9 @@ impl HeadlessWorkspace {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub fn agents(&self) -> &Entity<AgentHub> {
+        &self.agents
     }
 }
