@@ -1,5 +1,6 @@
 mod agent;
 mod connection;
+mod git;
 mod protocol;
 mod terminal;
 mod workspace;
