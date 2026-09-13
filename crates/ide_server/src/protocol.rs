@@ -150,6 +150,9 @@ pub enum ThreadEntry {
         status: String,
         markdown: String,
         permission_options: Vec<PermissionOption>,
+        /// Files the call touches — the graph glows them while the
+        /// agent works.
+        locations: Vec<String>,
     },
     Plan {
         entries: Vec<PlanEntry>,
