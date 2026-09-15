@@ -1,6 +1,7 @@
 use crate::protocol::{
-    AgentInfo, Event, Outgoing, PermissionOption, PlanEntry, ThreadEntry, ThreadList,
-    ThreadSnapshot, ThreadStatus, ThreadSummary,
+    AgentCatalog, AgentInfo, AuthMethodInfo, CatalogAgent, Event, Outgoing, PermissionOption,
+    PlanEntry, TerminalLogin, ThreadEntry, ThreadList, ThreadSnapshot, ThreadStatus,
+    ThreadSummary,
 };
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentConnection, AgentSessionListRequest, AgentThreadEntry,
@@ -11,8 +12,10 @@ use agent_servers::{AgentServer, AgentServerDelegate, CustomAgentServer};
 use anyhow::{Context as _, Result, anyhow};
 use async_channel::Sender;
 use gpui::{App, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
-use project::{AgentId, Project};
+use project::agent_server_store::AllAgentServersSettings;
+use project::{AgentId, AgentRegistryStore, ExternalAgentSource, Project};
 use serde::Serialize;
+use settings::SettingsStore;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -66,10 +69,171 @@ impl AgentHub {
                     .agent_display_name(id)
                     .map(|name| name.to_string())
                     .unwrap_or_else(|| id.0.to_string()),
+                source: match store.agent_source(id) {
+                    Some(ExternalAgentSource::Registry) => "registry",
+                    Some(ExternalAgentSource::Extension) => "extension",
+                    Some(ExternalAgentSource::Custom) | None => "custom",
+                },
             })
             .collect();
         agents.sort_by(|left, right| left.name.cmp(&right.name));
         agents
+    }
+
+    /// The ACP registry (Claude Agent, Codex, Gemini CLI, …) for adding an
+    /// agent from the IDE, marking what `agent_servers` already has. A stale
+    /// or empty cache starts a refresh; `fetching` tells the UI to ask again.
+    pub fn catalog(&self, cx: &mut Context<Self>) -> AgentCatalog {
+        let registry = AgentRegistryStore::global(cx);
+        registry.update(cx, |registry, cx| registry.refresh_if_stale(cx));
+        let configured = cx
+            .global::<SettingsStore>()
+            .get::<AllAgentServersSettings>(None);
+        let registry = registry.read(cx);
+        AgentCatalog {
+            agents: registry
+                .agents()
+                .iter()
+                .map(|agent| CatalogAgent {
+                    id: agent.id().0.to_string(),
+                    name: agent.name().to_string(),
+                    description: agent.description().to_string(),
+                    supported: agent.supports_current_platform(),
+                    added: configured.contains_key(agent.id().0.as_ref()),
+                })
+                .collect(),
+            fetching: registry.is_fetching(),
+            error: registry.fetch_error().map(|error| error.to_string()),
+        }
+    }
+
+    /// Adds `id` under `agent_servers` in the user's Zed settings: an ACP
+    /// registry agent, or any ACP command when `command` is set. Zed's
+    /// settings writer keeps the file's comments and reloads the settings
+    /// store, which re-registers agents — live here without a restart, and
+    /// in the user's Zed too.
+    pub fn add_agent(
+        &mut self,
+        id: String,
+        command: Option<String>,
+        args: Vec<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        // A replaced entry must not keep serving the old process.
+        self.connections.remove(&id);
+        // The settings-file shape (`settings::…`), not the same-named
+        // runtime types in `project::agent_server_store`.
+        let entry = match command {
+            Some(command) => settings::CustomAgentServerSettings::Custom {
+                path: command.into(),
+                args,
+                env: Default::default(),
+                default_mode: None,
+                default_model: None,
+                favorite_models: Vec::new(),
+                default_config_options: Default::default(),
+                favorite_config_option_values: Default::default(),
+            },
+            None => settings::CustomAgentServerSettings::Registry {
+                env: Default::default(),
+                default_mode: None,
+                default_model: None,
+                favorite_models: Vec::new(),
+                default_config_options: Default::default(),
+                favorite_config_option_values: Default::default(),
+            },
+        };
+        self.update_agent_servers(cx, move |servers| {
+            servers.insert(id, entry);
+        })
+    }
+
+    pub fn remove_agent(&mut self, id: String, cx: &mut Context<Self>) -> Task<Result<()>> {
+        self.connections.remove(&id);
+        self.update_agent_servers(cx, move |servers| {
+            servers.remove(&id);
+        })
+    }
+
+    fn update_agent_servers(
+        &self,
+        cx: &mut Context<Self>,
+        edit: impl 'static + Send + FnOnce(&mut settings::AllAgentServersSettings),
+    ) -> Task<Result<()>> {
+        let fs = self.project.read(cx).fs().clone();
+        cx.spawn(async move |_, cx| {
+            // Zed's writer puts its temp file beside settings.json, so a
+            // machine that has never run Zed needs the directory first.
+            if let Some(dir) = paths::settings_file().parent()
+                && !fs.is_dir(dir).await
+            {
+                fs.create_dir(dir).await?;
+            }
+            let written = cx.update(|cx| {
+                settings::update_settings_file_with_completion(fs, cx, move |content, _| {
+                    edit(content.agent_servers.get_or_insert_default());
+                })
+            });
+            written.await.context("settings write was dropped")?
+        })
+    }
+
+    /// How `agent_id` signs in: its ACP auth methods, with the login command
+    /// resolved for methods that run in a terminal (the UI runs those in its
+    /// terminal panel; the others go through `authenticate`).
+    pub async fn auth_methods(
+        this: &Entity<Self>,
+        agent_id: String,
+        cx: &mut AsyncApp,
+    ) -> Result<Vec<AuthMethodInfo>> {
+        let connection = Self::connect(this, agent_id, cx).await?;
+        let pending = cx.update(|cx| {
+            connection
+                .auth_methods()
+                .iter()
+                .map(|method| {
+                    (
+                        method.id().0.to_string(),
+                        method.name().to_string(),
+                        method.description().map(str::to_owned),
+                        connection.terminal_auth_task(method.id(), cx),
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+        let mut methods = Vec::with_capacity(pending.len());
+        for (id, name, description, terminal) in pending {
+            let terminal = match terminal {
+                Some(task) => {
+                    let spawn = task.await?;
+                    Some(TerminalLogin {
+                        command: spawn.command.unwrap_or_default(),
+                        args: spawn.args,
+                        env: spawn.env.into_iter().collect(),
+                        label: spawn.label,
+                    })
+                }
+                None => None,
+            };
+            methods.push(AuthMethodInfo {
+                id,
+                name,
+                description,
+                terminal,
+            });
+        }
+        Ok(methods)
+    }
+
+    pub async fn authenticate(
+        this: &Entity<Self>,
+        agent_id: String,
+        method_id: String,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        let connection = Self::connect(this, agent_id, cx).await?;
+        cx.update(|cx| connection.authenticate(acp::AuthMethodId::new(method_id), cx))
+            .await
     }
 
     fn connect(

@@ -44,6 +44,25 @@ pub enum Command {
     TerminalClose { terminal_id: u64 },
     #[serde(rename = "agent.list")]
     AgentList,
+    /// The ACP registry's agents, for adding one from the IDE's settings.
+    #[serde(rename = "agent.catalog")]
+    AgentCatalog,
+    /// Adds an entry to `agent_servers` in the user's Zed settings.
+    #[serde(rename = "agent.add")]
+    AgentAdd {
+        id: String,
+        /// Any ACP command; absent means `id` names an ACP registry agent.
+        #[serde(default)]
+        command: Option<String>,
+        #[serde(default)]
+        args: Vec<String>,
+    },
+    #[serde(rename = "agent.remove")]
+    AgentRemove { id: String },
+    #[serde(rename = "agent.auth_methods", rename_all = "camelCase")]
+    AgentAuthMethods { agent_id: String },
+    #[serde(rename = "agent.authenticate", rename_all = "camelCase")]
+    AgentAuthenticate { agent_id: String, method_id: String },
     #[serde(rename = "thread.list", rename_all = "camelCase")]
     ThreadList { agent_id: String },
     #[serde(rename = "thread.open", rename_all = "camelCase")]
@@ -74,7 +93,13 @@ pub enum Command {
 #[serde(untagged)]
 pub enum Outgoing {
     Ok { id: u64, ok: serde_json::Value },
-    Error { id: u64, error: String },
+    Error {
+        id: u64,
+        error: String,
+        /// A machine-readable reason the UI can act on (`auth_required`).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        code: Option<&'static str>,
+    },
     Event(Event),
 }
 
@@ -96,6 +121,49 @@ pub enum Event {
 pub struct AgentInfo {
     pub id: String,
     pub name: String,
+    /// `registry` and `custom` agents live under `agent_servers`;
+    /// `extension` agents can't be removed through settings.
+    pub source: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCatalog {
+    pub agents: Vec<CatalogAgent>,
+    /// The registry is still downloading; ask again shortly.
+    pub fetching: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogAgent {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    /// Has a build for this platform.
+    pub supported: bool,
+    /// Already under `agent_servers`.
+    pub added: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthMethodInfo {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    /// Set for logins that run as a terminal command (e.g. `claude /login`).
+    pub terminal: Option<TerminalLogin>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalLogin {
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: std::collections::HashMap<String, String>,
+    pub label: String,
 }
 
 #[derive(Debug, Serialize)]

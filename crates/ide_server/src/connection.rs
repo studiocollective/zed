@@ -124,6 +124,29 @@ impl Connection {
                 crate::prefs::set(key, value)?;
                 Ok(serde_json::Value::Null)
             })),
+            // Zed settings-file writes.
+            Command::AgentAdd { id, command, args } => Ok(cx.spawn(async move |cx| {
+                agents
+                    .update(cx, |agents, cx| agents.add_agent(id, command, args, cx))
+                    .await?;
+                Ok(serde_json::Value::Null)
+            })),
+            Command::AgentRemove { id } => Ok(cx.spawn(async move |cx| {
+                agents
+                    .update(cx, |agents, cx| agents.remove_agent(id, cx))
+                    .await?;
+                Ok(serde_json::Value::Null)
+            })),
+            Command::AgentAuthMethods { agent_id } => Ok(cx.spawn(async move |cx| {
+                to_value(AgentHub::auth_methods(&agents, agent_id, cx).await?)
+            })),
+            Command::AgentAuthenticate {
+                agent_id,
+                method_id,
+            } => Ok(cx.spawn(async move |cx| {
+                AgentHub::authenticate(&agents, agent_id, method_id, cx).await?;
+                Ok(serde_json::Value::Null)
+            })),
             Command::ThreadList { agent_id } => Ok(cx.spawn(async move |cx| {
                 to_value(AgentHub::list_threads(&agents, agent_id, cx).await?)
             })),
@@ -183,6 +206,9 @@ impl Connection {
             Command::AgentList => {
                 to_value(self.agents().read_with(cx, |agents, cx| agents.agents(cx)))
             }
+            Command::AgentCatalog => {
+                to_value(self.agents().update(cx, |agents, cx| agents.catalog(cx)))
+            }
             Command::ThreadGet { thread_id } => to_value(
                 self.agents()
                     .read_with(cx, |agents, cx| agents.thread_snapshot(&thread_id, cx))?,
@@ -212,6 +238,10 @@ impl Connection {
             | Command::GitTree
             | Command::SettingsAll
             | Command::SettingsSet { .. }
+            | Command::AgentAdd { .. }
+            | Command::AgentRemove { .. }
+            | Command::AgentAuthMethods { .. }
+            | Command::AgentAuthenticate { .. }
             | Command::ThreadList { .. }
             | Command::ThreadOpen { .. }
             | Command::ThreadDelete { .. } => {
@@ -241,6 +271,11 @@ fn respond(id: u64, result: Result<serde_json::Value>) -> Outgoing {
         Ok(ok) => Outgoing::Ok { id, ok },
         Err(error) => Outgoing::Error {
             id,
+            // The UI answers this one with a sign-in flow instead of an
+            // error message.
+            code: error
+                .downcast_ref::<acp_thread::AuthRequired>()
+                .map(|_| "auth_required"),
             error: format!("{error:#}"),
         },
     }

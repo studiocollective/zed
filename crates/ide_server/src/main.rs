@@ -154,11 +154,14 @@ fn init_project(cx: &mut App) -> Result<Entity<Project>> {
     let _extension_host_proxy = ExtensionHostProxy::global(cx);
     project::AgentRegistryStore::init_global(cx, fs.clone(), client.http_client());
 
+    // Registry agents (Claude Agent, Codex, Gemini CLI) run through npx, so
+    // fetch Node the way Zed does when it isn't on PATH — first-run agent
+    // setup has to work on a machine that has never had Node or Zed.
     let (mut node_options_tx, node_options_rx) = watch::channel(None);
     node_options_tx
         .send(Some(NodeBinaryOptions {
             allow_path_lookup: true,
-            allow_binary_download: false,
+            allow_binary_download: true,
             use_paths: None,
         }))
         .log_err();
